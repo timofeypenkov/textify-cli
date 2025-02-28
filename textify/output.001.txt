@@ -1,0 +1,232 @@
+// textify.test.ts
+import * as fs from "fs";
+import * as path from "path";
+import { Textify } from "./textify";
+
+jest.mock("fs", () => ({
+  ...jest.requireActual("fs"),
+  existsSync: jest.fn(),
+  mkdirSync: jest.fn(),
+  readFileSync: jest.fn(),
+  promises: {
+    readdir: jest.fn(),
+    readFile: jest.fn(),
+  },
+}));
+
+describe("Textify", () => {
+  let textify: Textify;
+
+  beforeEach(() => {
+    textify = new Textify();
+    jest.clearAllMocks();
+  });
+
+  test("loads default config when no config file exists", () => {
+    (fs.readFileSync as jest.Mock).mockImplementation(() => {
+      throw new Error("File not found");
+    });
+    const newTextify = new Textify();
+    expect(newTextify["config"]).toEqual({
+      includeExtensions: [".ts", ".tsx", ".js", ".jsx"],
+      excludeExtensions: [".log", ".md"],
+      includeDirs: ["."],
+      excludeDirs: ["node_modules", ".git", "dist", "build"],
+      maxFilesWarning: 100,
+    });
+  });
+
+  test("shouldSkip returns true for excluded extensions", () => {
+    const result = textify["shouldSkip"]("test.log");
+    expect(result).toBe(true);
+  });
+
+  test("shouldSkip returns false for included extensions", () => {
+    const result = textify["shouldSkip"]("test.ts");
+    expect(result).toBe(false);
+  });
+
+  test("getNextOutputFileName increments filename when file exists", () => {
+    (fs.existsSync as jest.Mock)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+
+    const result = textify["getNextOutputFileName"]();
+    expect(result).toBe("output.002.txt");
+  });
+
+  test("isValidFile validates file extensions correctly", () => {
+    expect(textify["isValidFile"]("test.ts")).toBe(true);
+    expect(textify["isValidFile"]("test.log")).toBe(false);
+    expect(textify["isValidFile"]("test.xyz")).toBe(false);
+  });
+});
+
+
+// textify.ts
+#!/usr/bin/env ts-node
+import * as fs from "fs";
+import * as path from "path";
+import ignore from "ignore";
+import * as readline from "readline";
+
+interface Config {
+  includeExtensions: string[];
+  excludeExtensions: string[];
+  includeDirs: string[];
+  excludeDirs: string[];
+  maxFilesWarning: number;
+}
+
+const defaultConfig: Config = {
+  includeExtensions: [".ts", ".tsx", ".js", ".jsx"],
+  excludeExtensions: [".log", ".md"],
+  includeDirs: ["."],
+  excludeDirs: ["node_modules", ".git", "dist", "build"],
+  maxFilesWarning: 100,
+};
+
+class Textify {
+  private config: Config = defaultConfig; // Инициализируем дефолтным значением
+  private gitignore: any;
+  private outputDir = path.join(process.cwd(), "textify");
+  private outputFileBase = "output.txt";
+
+  constructor() {
+    this.loadConfig();
+    this.loadGitignore();
+  }
+
+  private loadConfig() {
+    const configPath = path.join(process.cwd(), "textify.config.json");
+    try {
+      const configData = fs.readFileSync(configPath, "utf-8");
+      this.config = { ...defaultConfig, ...JSON.parse(configData) };
+    } catch {
+      console.log("Config file not found, using defaults");
+    }
+  }
+
+  private loadGitignore() {
+    const gitignorePath = path.join(process.cwd(), ".gitignore");
+    this.gitignore = ignore();
+    try {
+      const gitignoreContent = fs.readFileSync(gitignorePath, "utf-8");
+      this.gitignore.add(gitignoreContent);
+    } catch {
+      console.log("No .gitignore found, proceeding with config only");
+    }
+  }
+
+  private async getFilesCount(dir: string): Promise<number> {
+    let count = 0;
+    const files = await fs.promises.readdir(dir, { withFileTypes: true });
+
+    for (const file of files) {
+      const fullPath = path.join(dir, file.name);
+      if (this.shouldSkip(fullPath)) continue;
+
+      if (file.isDirectory()) {
+        count += await this.getFilesCount(fullPath);
+      } else if (this.isValidFile(fullPath)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  private shouldSkip(filePath: string): boolean {
+    const relativePath = path.relative(process.cwd(), filePath);
+    if (this.gitignore?.ignores(relativePath)) return true;
+
+    const ext = path.extname(filePath);
+    if (this.config.excludeExtensions.includes(ext)) return true;
+    if (!this.config.includeExtensions.includes(ext)) return true;
+
+    const dir = path.dirname(filePath);
+    if (this.config.excludeDirs.some((d) => dir.includes(d))) return true;
+
+    return false;
+  }
+
+  private isValidFile(filePath: string): boolean {
+    const ext = path.extname(filePath);
+    return (
+      this.config.includeExtensions.includes(ext) &&
+      !this.config.excludeExtensions.includes(ext)
+    );
+  }
+
+  private getNextOutputFileName(): string {
+    let counter = 0;
+    let fileName = this.outputFileBase;
+
+    while (fs.existsSync(path.join(this.outputDir, fileName))) {
+      counter++;
+      fileName = `${path.basename(this.outputFileBase, ".txt")}.${counter.toString().padStart(3, "0")}.txt`;
+    }
+    return fileName;
+  }
+
+  private async processFiles(dir: string, outputStream: fs.WriteStream) {
+    const files = await fs.promises.readdir(dir, { withFileTypes: true });
+
+    for (const file of files) {
+      const fullPath = path.join(dir, file.name);
+      if (this.shouldSkip(fullPath)) continue;
+
+      if (file.isDirectory()) {
+        await this.processFiles(fullPath, outputStream);
+      } else if (this.isValidFile(fullPath)) {
+        const relativePath = path.relative(process.cwd(), fullPath);
+        const content = await fs.promises.readFile(fullPath, "utf-8");
+        outputStream.write(`// ${relativePath}\n${content}\n\n`);
+      }
+    }
+  }
+
+  public async run() {
+    const totalFiles = await this.getFilesCount(process.cwd());
+
+    if (totalFiles > this.config.maxFilesWarning) {
+      console.log(
+        `Warning: Found ${totalFiles} files exceeding limit of ${this.config.maxFilesWarning}`,
+      );
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
+
+      const answer = await new Promise<string>((resolve) =>
+        rl.question("Continue? (y/n): ", resolve),
+      );
+      rl.close();
+
+      if (answer.toLowerCase() !== "y") {
+        console.log("Aborted by user");
+        return;
+      }
+    }
+
+    if (!fs.existsSync(this.outputDir)) {
+      fs.mkdirSync(this.outputDir);
+    }
+
+    const outputFile = path.join(this.outputDir, this.getNextOutputFileName());
+    const outputStream = fs.createWriteStream(outputFile);
+
+    await this.processFiles(process.cwd(), outputStream);
+    outputStream.end();
+    console.log(`Output written to ${outputFile}`);
+  }
+}
+
+async function main() {
+  const textify = new Textify();
+  await textify.run();
+}
+
+main().catch(console.error);
+
+
