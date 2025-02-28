@@ -1,0 +1,7 @@
+node_modules
+*.test.ts
+*.ts
+tsconfig.json
+jest.config.mjs
+dist
+textify

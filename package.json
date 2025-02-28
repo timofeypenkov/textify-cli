@@ -1,16 +1,35 @@
 {
-  "name": "textify",
+  "name": "textify-cli",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "CLI utility to concatenate project source files into a single text file",
+  "main": "lib/textify.js",
+  "bin": {
+    "textify-cli": "./bin/textify-cli.js"
+  },
+  "types": "lib/textify.d.ts",
   "type": "module",
   "scripts": {
-    "textify": "ts-node src/textify.ts",
-    "test": "jest"
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "test": "jest",
+    "textify-cli": "ts-node lib/textify.ts"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "keywords": [
+    "file-concatenation",
+    "source-code",
+    "utility",
+    "cli"
+  ],
+  "author": "Your Name <your.email@example.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/username/textify-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/username/textify-cli/issues"
+  },
+  "homepage": "https://github.com/username/textify-cli#readme",
   "devDependencies": {
     "@types/jest": "^29.5.14",
     "@types/node": "^22.13.5",
@@ -19,5 +38,6 @@
     "ts-jest": "^29.2.6",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.3"
-  }
+  },
+  "dependencies": {}
 }
