@@ -12,7 +12,7 @@
     "build": "tsc",
     "prepublishOnly": "npm run build",
     "test": "jest",
-    "textify-cli": "ts-node lib/textify.ts"
+    "textify-cli": "ts-node src/textify.ts"
   },
   "keywords": [
     "file-concatenation",
