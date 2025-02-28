@@ -1,6 +1,6 @@
 {
   "name": "textify-cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "CLI utility to concatenate project source files into a single text file",
   "main": "lib/textify.js",
   "bin": {
@@ -30,6 +30,9 @@
     "url": "https://github.com/username/textify-cli/issues"
   },
   "homepage": "https://github.com/username/textify-cli#readme",
+  "dependencies": {
+    "ignore": "^7.0.3"
+  },
   "devDependencies": {
     "@types/jest": "^29.5.14",
     "@types/node": "^22.13.5",
@@ -38,6 +41,5 @@
     "ts-jest": "^29.2.6",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.3"
-  },
-  "dependencies": {}
+  }
 }
