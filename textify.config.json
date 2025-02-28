@@ -1,14 +1,7 @@
 {
-  "includeExtensions": [".ts", ".tsx", ".js", ".jsx"],
+  "includeExtensions": [".ts", ".tsx", ".js", ".jsx", ".json"],
   "excludeExtensions": [".log", ".md"],
-  "includeDirs": ["src"],
-  "excludeDirs": [
-    "src/api",
-    "src/pages/admin",
-    "node_modules",
-    ".git",
-    "dist",
-    "build"
-  ],
+  "includeDirs": ["./"],
+  "excludeDirs": ["textify", "node_modules", ".git", "dist", "build"],
   "maxFilesWarning": 100
 }

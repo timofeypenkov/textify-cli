@@ -13,11 +13,11 @@ interface Config {
 }
 
 const defaultConfig: Config = {
-  includeExtensions: [".ts", ".tsx", ".js", ".jsx"],
+  includeExtensions: [".ts", ".tsx", ".js", ".jsx", ".json"],
   excludeExtensions: [".log", ".md"],
   includeDirs: ["."],
-  excludeDirs: ["node_modules", ".git", "dist", "build"],
-  maxFilesWarning: 100,
+  excludeDirs: ["textify", "node_modules", ".git", "dist", "build"],
+  maxFilesWarning: 50,
 };
 
 export class Textify {

@@ -4,7 +4,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "textify": "ts-node --logError textify.ts",
+    "textify": "ts-node src/textify.ts",
     "test": "jest"
   },
   "keywords": [],

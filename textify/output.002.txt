@@ -1,4 +1,43 @@
-// textify.test.ts
+// jest.config.js
+// jest.config.mjs
+export default {
+  preset: "ts-jest",
+  testEnvironment: "node",
+  transform: {
+    "^.+\\.ts$": "ts-jest",
+  },
+  transformIgnorePatterns: ["/node_modules/"],
+  extensionsToTreatAsEsm: [".ts"],
+};
+
+
+// package.json
+{
+  "name": "textify",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "textify": "ts-node src/textify.ts",
+    "test": "jest"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.13.5",
+    "ignore": "^7.0.3",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.6",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  }
+}
+
+
+// src/textify.test.ts
 import * as fs from "fs";
 import * as path from "path";
 import { Textify } from "./textify";
@@ -8,6 +47,7 @@ jest.mock("fs", () => ({
   existsSync: jest.fn(),
   mkdirSync: jest.fn(),
   readFileSync: jest.fn(),
+  statSync: jest.fn(), // Добавляем мок для statSync
   promises: {
     readdir: jest.fn(),
     readFile: jest.fn(),
@@ -16,18 +56,25 @@ jest.mock("fs", () => ({
 
 describe("Textify", () => {
   let textify: Textify;
+  let mockReaddir: jest.Mock;
+  let mockReadFile: jest.Mock;
+  let mockExistsSync: jest.Mock;
+  let mockStatSync: jest.Mock;
 
   beforeEach(() => {
     textify = new Textify();
+    mockReaddir = fs.promises.readdir as jest.Mock;
+    mockReadFile = fs.promises.readFile as jest.Mock;
+    mockExistsSync = fs.existsSync as jest.Mock;
+    mockStatSync = fs.statSync as jest.Mock;
+    (fs.readFileSync as jest.Mock).mockImplementation(() => {
+      throw new Error("File not found");
+    }); // Мок для config и gitignore
     jest.clearAllMocks();
   });
 
   test("loads default config when no config file exists", () => {
-    (fs.readFileSync as jest.Mock).mockImplementation(() => {
-      throw new Error("File not found");
-    });
-    const newTextify = new Textify();
-    expect(newTextify["config"]).toEqual({
+    expect(textify["config"]).toEqual({
       includeExtensions: [".ts", ".tsx", ".js", ".jsx"],
       excludeExtensions: [".log", ".md"],
       includeDirs: ["."],
@@ -37,13 +84,50 @@ describe("Textify", () => {
   });
 
   test("shouldSkip returns true for excluded extensions", () => {
-    const result = textify["shouldSkip"]("test.log");
-    expect(result).toBe(true);
+    expect(textify["shouldSkip"]("test.log")).toBe(true);
+    expect(textify["shouldSkip"]("test.md")).toBe(true);
   });
 
   test("shouldSkip returns false for included extensions", () => {
-    const result = textify["shouldSkip"]("test.ts");
-    expect(result).toBe(false);
+    mockStatSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+    });
+    expect(textify["shouldSkip"]("test.ts")).toBe(false);
+    expect(textify["shouldSkip"]("test.tsx")).toBe(false);
+  });
+
+  test("shouldSkip returns true for gitignore", () => {
+    textify["gitignore"] = { ignores: jest.fn().mockReturnValue(true) };
+    expect(textify["shouldSkip"]("ignored/file.ts")).toBe(true);
+  });
+
+  test("shouldSkip returns true for excludeDirs", () => {
+    textify["config"] = {
+      ...textify["config"],
+      includeDirs: ["src"],
+      excludeDirs: ["src/api", "node_modules"],
+    };
+    mockStatSync.mockReturnValue({ isDirectory: () => true });
+    expect(textify["shouldSkip"](path.resolve("src/api/test.ts"))).toBe(true);
+    expect(textify["shouldSkip"](path.resolve("node_modules/test.ts"))).toBe(
+      true,
+    );
+  });
+
+  test("shouldSkip returns false for nested files within includeDirs", () => {
+    textify["config"] = {
+      ...textify["config"],
+      includeDirs: ["src"],
+      excludeDirs: ["src/api", "node_modules"],
+    };
+    mockStatSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+    });
+    expect(textify["shouldSkip"](path.resolve("src/utils/test.ts"))).toBe(
+      false,
+    );
   });
 
   test("getNextOutputFileName increments filename when file exists", () => {
@@ -61,10 +145,84 @@ describe("Textify", () => {
     expect(textify["isValidFile"]("test.log")).toBe(false);
     expect(textify["isValidFile"]("test.xyz")).toBe(false);
   });
+
+  test("processFiles and processDir outputs correct structure with spaces", () => {
+    const mockOutputStream = {
+      write: jest.fn(),
+      end: jest.fn(),
+    };
+    const consoleLogSpy = jest.spyOn(console, "log").mockImplementation();
+
+    // Имитация существования директории src
+    mockExistsSync.mockReturnValue(true);
+
+    // Настройка mockStatSync для разных путей
+    mockStatSync.mockImplementation((filePath: string) => {
+      const relativePath = path.relative(process.cwd(), filePath);
+      if (
+        relativePath === "src" ||
+        relativePath.startsWith("src/utils") ||
+        relativePath.startsWith("src/api")
+      ) {
+        return { isDirectory: () => true, isFile: () => false };
+      } else if (
+        relativePath === "src/index.ts" ||
+        relativePath === "src/utils/helper.ts"
+      ) {
+        return { isDirectory: () => false, isFile: () => true };
+      }
+      return { isDirectory: () => false, isFile: () => false };
+    });
+
+    // Настройка mockReaddir для src
+    mockReaddir.mockImplementation((dirPath: string) => {
+      const relativePath = path.relative(process.cwd(), dirPath);
+      if (relativePath === "src") {
+        return Promise.resolve([
+          { name: "index.ts", isDirectory: () => false, isFile: () => true },
+          { name: "utils", isDirectory: () => true, isFile: () => false },
+          { name: "api", isDirectory: () => true, isFile: () => false },
+        ]);
+      } else if (relativePath === "src/utils") {
+        return Promise.resolve([
+          { name: "helper.ts", isDirectory: () => false, isFile: () => true },
+        ]);
+      } else if (relativePath === "src/api") {
+        return Promise.resolve([]); // Пустой массив для api, так как исключено
+      }
+      return Promise.resolve([]);
+    });
+
+    mockReadFile.mockResolvedValue("content");
+
+    textify["config"] = {
+      ...textify["config"],
+      includeDirs: ["src"],
+      excludeDirs: ["src/api", "node_modules"],
+    };
+
+    return textify["processFiles"](mockOutputStream as any).then(() => {
+      expect(consoleLogSpy).toHaveBeenCalledWith("Collecting files:");
+      expect(consoleLogSpy).toHaveBeenCalledWith("src/");
+      expect(consoleLogSpy).toHaveBeenCalledWith("  index.ts");
+      expect(consoleLogSpy).toHaveBeenCalledWith("  utils/");
+      expect(consoleLogSpy).toHaveBeenCalledWith("    helper.ts");
+      expect(consoleLogSpy).not.toHaveBeenCalledWith("  api/"); // Исключено
+      expect(mockOutputStream.write).toHaveBeenCalledWith(
+        "// src/index.ts\ncontent\n\n",
+      );
+      expect(mockOutputStream.write).toHaveBeenCalledWith(
+        "// src/utils/helper.ts\ncontent\n\n",
+      );
+      expect(mockOutputStream.write).not.toHaveBeenCalledWith(
+        expect.stringContaining("src/api"),
+      );
+    });
+  });
 });
 
 
-// textify.ts
+// src/textify.ts
 #!/usr/bin/env ts-node
 import * as fs from "fs";
 import * as path from "path";
@@ -80,15 +238,15 @@ interface Config {
 }
 
 const defaultConfig: Config = {
-  includeExtensions: [".ts", ".tsx", ".js", ".jsx"],
+  includeExtensions: [".ts", ".tsx", ".js", ".jsx", ".json"],
   excludeExtensions: [".log", ".md"],
   includeDirs: ["."],
-  excludeDirs: ["node_modules", ".git", "dist", "build"],
-  maxFilesWarning: 100,
+  excludeDirs: ["textify", "node_modules", ".git", "dist", "build"],
+  maxFilesWarning: 50,
 };
 
-class Textify {
-  private config: Config = defaultConfig; // Инициализируем дефолтным значением
+export class Textify {
+  private config: Config = defaultConfig;
   private gitignore: any;
   private outputDir = path.join(process.cwd(), "textify");
   private outputFileBase = "output.txt";
@@ -119,7 +277,17 @@ class Textify {
     }
   }
 
-  private async getFilesCount(dir: string): Promise<number> {
+  private async getFilesCount(): Promise<number> {
+    let count = 0;
+    for (const dir of this.config.includeDirs) {
+      const fullPath = path.resolve(process.cwd(), dir);
+      if (!fs.existsSync(fullPath)) continue;
+      count += await this.countFilesInDir(fullPath);
+    }
+    return count;
+  }
+
+  private async countFilesInDir(dir: string): Promise<number> {
     let count = 0;
     const files = await fs.promises.readdir(dir, { withFileTypes: true });
 
@@ -128,7 +296,7 @@ class Textify {
       if (this.shouldSkip(fullPath)) continue;
 
       if (file.isDirectory()) {
-        count += await this.getFilesCount(fullPath);
+        count += await this.countFilesInDir(fullPath);
       } else if (this.isValidFile(fullPath)) {
         count++;
       }
@@ -142,12 +310,33 @@ class Textify {
 
     const ext = path.extname(filePath);
     if (this.config.excludeExtensions.includes(ext)) return true;
-    if (!this.config.includeExtensions.includes(ext)) return true;
+    if (
+      !this.config.includeExtensions.includes(ext) &&
+      !fs.statSync(filePath).isDirectory()
+    )
+      return true;
 
-    const dir = path.dirname(filePath);
-    if (this.config.excludeDirs.some((d) => dir.includes(d))) return true;
+    const fullPath = path.resolve(process.cwd(), filePath);
 
-    return false;
+    // Сначала проверяем исключения из excludeDirs
+    const isExcluded = this.config.excludeDirs.some((excludeDir) => {
+      const excludePath = path.resolve(process.cwd(), excludeDir);
+      return (
+        fullPath === excludePath || fullPath.startsWith(excludePath + path.sep)
+      );
+    });
+    if (isExcluded) return true;
+
+    // Проверяем, входит ли путь в includeDirs
+    const isIncluded = this.config.includeDirs.some((includeDir) => {
+      const includePath = path.resolve(process.cwd(), includeDir);
+      return (
+        fullPath.startsWith(includePath + path.sep) || fullPath === includePath
+      );
+    });
+
+    // Если путь не входит в includeDirs, пропускаем его
+    return !isIncluded;
   }
 
   private isValidFile(filePath: string): boolean {
@@ -169,17 +358,39 @@ class Textify {
     return fileName;
   }
 
-  private async processFiles(dir: string, outputStream: fs.WriteStream) {
+  private async processFiles(outputStream: fs.WriteStream) {
+    console.log("Collecting files:");
+    for (const dir of this.config.includeDirs) {
+      const fullPath = path.resolve(process.cwd(), dir);
+      if (!fs.existsSync(fullPath)) {
+        console.log(`Directory ${dir} does not exist, skipping`);
+        continue;
+      }
+      const relativeDir = path.relative(process.cwd(), fullPath) || ".";
+      console.log(`${relativeDir}/`);
+      await this.processDir(fullPath, outputStream, 1);
+    }
+  }
+
+  private async processDir(
+    dir: string,
+    outputStream: fs.WriteStream,
+    depth: number,
+  ) {
     const files = await fs.promises.readdir(dir, { withFileTypes: true });
 
     for (const file of files) {
       const fullPath = path.join(dir, file.name);
       if (this.shouldSkip(fullPath)) continue;
 
+      const relativePath = path.relative(process.cwd(), fullPath);
+      const indent = "  ".repeat(depth);
+
       if (file.isDirectory()) {
-        await this.processFiles(fullPath, outputStream);
+        console.log(`${indent}${file.name}/`);
+        await this.processDir(fullPath, outputStream, depth + 1);
       } else if (this.isValidFile(fullPath)) {
-        const relativePath = path.relative(process.cwd(), fullPath);
+        console.log(`${indent}${file.name}`);
         const content = await fs.promises.readFile(fullPath, "utf-8");
         outputStream.write(`// ${relativePath}\n${content}\n\n`);
       }
@@ -187,7 +398,7 @@ class Textify {
   }
 
   public async run() {
-    const totalFiles = await this.getFilesCount(process.cwd());
+    const totalFiles = await this.getFilesCount();
 
     if (totalFiles > this.config.maxFilesWarning) {
       console.log(
@@ -216,17 +427,48 @@ class Textify {
     const outputFile = path.join(this.outputDir, this.getNextOutputFileName());
     const outputStream = fs.createWriteStream(outputFile);
 
-    await this.processFiles(process.cwd(), outputStream);
+    await this.processFiles(outputStream);
     outputStream.end();
     console.log(`Output written to ${outputFile}`);
   }
 }
 
-async function main() {
+export async function main() {
   const textify = new Textify();
   await textify.run();
 }
 
 main().catch(console.error);
+
+
+// textify.config.json
+{
+  "includeExtensions": [".ts", ".tsx", ".js", ".jsx", ".json"],
+  "excludeExtensions": [".log", ".md"],
+  "includeDirs": ["./"],
+  "excludeDirs": ["textify", "node_modules", ".git", "dist", "build"],
+  "maxFilesWarning": 100
+}
+
+
+// tsconfig.json
+{
+    "compilerOptions": {
+        "target": "ESNext",
+        "module": "CommonJS",
+        "strict": true,
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "forceConsistentCasingInFileNames": true,
+        "outDir": "./dist",
+        "rootDir": "./"
+    },
+    "include": [
+        "**/*.ts"
+    ],
+    "exclude": [
+        "node_modules"
+    ]
+}
 
 

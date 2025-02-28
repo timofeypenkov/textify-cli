@@ -35,11 +35,11 @@ describe("Textify", () => {
 
   test("loads default config when no config file exists", () => {
     expect(textify["config"]).toEqual({
-      includeExtensions: [".ts", ".tsx", ".js", ".jsx"],
+      includeExtensions: [".ts", ".tsx", ".js", ".jsx", ".json"],
       excludeExtensions: [".log", ".md"],
       includeDirs: ["."],
-      excludeDirs: ["node_modules", ".git", "dist", "build"],
-      maxFilesWarning: 100,
+      excludeDirs: ["textify", "node_modules", ".git", "dist", "build"],
+      maxFilesWarning: 50,
     });
   });
 
